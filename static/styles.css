@@ -164,6 +164,25 @@ h1 {
 .top-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.notice {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--teal);
+  background: #fff;
+  border-radius: 7px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.notice.error {
+  border-left-color: var(--red);
+}
+
+.notice.success {
+  border-left-color: var(--green);
 }
 
 .tabs {
@@ -407,6 +426,11 @@ th {
   padding: 8px;
   max-height: 180px;
   overflow: auto;
+}
+
+.helper {
+  color: var(--muted);
+  margin-bottom: 12px;
 }
 
 .memo-text {

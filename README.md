@@ -11,6 +11,12 @@ The app is built to keep the pricing record auditable:
 
 ## Run
 
+Optional preflight:
+
+```powershell
+python scripts/doctor.py
+```
+
 ```powershell
 python app.py
 ```
@@ -21,13 +27,39 @@ Then open:
 http://127.0.0.1:8765
 ```
 
+If the default port is already in use and `CPA_PORT` is not explicitly set, the server uses the next available port and prints the actual URL.
+
 ## Optional Environment
 
 ```powershell
 $env:SAM_API_KEY = "your-sam-public-api-key"
+$env:CPA_PORT = "8765"
+$env:CPA_DB_PATH = "C:\CAOC\commodity_price_analysis\data\commodity_price_analysis.sqlite3"
+$env:CPA_BACKUP_DIR = "C:\CAOC\commodity_price_analysis\data\backups"
 ```
 
 Without `SAM_API_KEY`, the app still runs and USAspending discovery still works.
+
+## Operator Controls
+
+- `GET /api/operator/status` returns schema, database, WAL, row counts, host/port, and backup path.
+- `POST /api/operator/backup` creates a local SQLite backup.
+- `GET /api/cases/<case_id>/memo.txt` exports the memo draft.
+- `GET /api/cases/<case_id>/igce.csv` exports the IGCE/evidence table.
+- `GET /api/cases/<case_id>/export.json` exports the full case, analysis, and audit log.
+- `GET /api/cases/<case_id>/audit` returns the audit events for the case.
+
+Runtime state is intentionally ignored by git under `data/` and `logs/`.
+
+## Operator-Level Guardrails
+
+- Request bodies are size-limited.
+- Case, evidence, adjustment, URL, unit, date, and numeric inputs are validated before write.
+- SQLite uses WAL mode, busy timeouts, foreign keys, and local backup support.
+- External API failures return source-specific error payloads instead of crashing the server.
+- USAspending and SAM.gov remain context-only unless unit-price evidence is supplied separately.
+- Evidence that fails comparability checks is blocked from the unit-price calculation and shown as context-only.
+- Case exports include audit events so the operator can preserve the calculation path.
 
 ## Test
 
@@ -43,4 +75,3 @@ python -m unittest discover -s tests
 - USAspending API
 - SAM.gov Opportunities API
 - USDA AgTransport, BLS, EIA, and FRED as future adjustment data sources
-

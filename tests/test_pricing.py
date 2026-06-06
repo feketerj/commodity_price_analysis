@@ -90,7 +90,34 @@ class PricingTests(unittest.TestCase):
         self.assertEqual(result.status, "context_only")
         self.assertTrue(any("Pack mismatch" in issue for issue in result.critical_issues))
 
+    def test_negative_adjusted_price_excludes_evidence(self):
+        evidence = {
+            "id": "ev-1",
+            "source_type": "analyst_upload",
+            "source_name": "bad adjustment",
+            "source_url": "https://example.gov/source",
+            "citation": "source",
+            "commodity": "pinto beans",
+            "form": "dry edible beans",
+            "pack": "50 kg bag",
+            "grade": "USDA spec",
+            "price_date": "2026-06-04",
+            "unit_price": 1,
+            "price_basis_unit": "lb",
+            "freight_included": True,
+        }
+        adjustments = [
+            {
+                "evidence_id": "ev-1",
+                "category": "other",
+                "amount_per_unit": -2,
+                "rationale": "test",
+            }
+        ]
+        result = evaluate_evidence(self.case, evidence, adjustments)
+        self.assertEqual(result.status, "context_only")
+        self.assertTrue(any("zero or negative" in issue for issue in result.critical_issues))
+
 
 if __name__ == "__main__":
     unittest.main()
-

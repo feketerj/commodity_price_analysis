@@ -21,6 +21,29 @@ async function api(path, options = {}) {
   return payload;
 }
 
+function showNotice(message, type = "info") {
+  const notice = $("#notice");
+  notice.textContent = message;
+  notice.className = `notice ${type}`;
+  notice.hidden = false;
+}
+
+function hideNotice() {
+  $("#notice").hidden = true;
+}
+
+async function runSafely(action, successMessage = "") {
+  try {
+    hideNotice();
+    const result = await action();
+    if (successMessage) showNotice(successMessage, "success");
+    return result;
+  } catch (error) {
+    showNotice(error.message || "Request failed", "error");
+    return null;
+  }
+}
+
 function formData(form) {
   const data = {};
   const fd = new FormData(form);
@@ -30,7 +53,7 @@ function formData(form) {
   for (const element of form.querySelectorAll("input[type='checkbox']")) {
     data[element.name] = element.checked;
   }
-  for (const key of ["quantity_value", "unit_price", "package_weight_value", "amount_per_unit"]) {
+  for (const key of ["quantity_value", "target_package_weight_value", "unit_price", "package_weight_value", "amount_per_unit"]) {
     if (key in data && data[key] !== "") data[key] = Number(data[key]);
   }
   return data;
@@ -80,6 +103,8 @@ function renderCaseHeader() {
   $("#caseTitle").textContent = c.title;
   $("#caseMeta").textContent = `${c.commodity} | ${c.form} | ${c.pack} | ${c.quantity_value} ${c.quantity_unit} | ${c.destination || "destination not specified"}`;
   $("#memoDownload").href = `/api/cases/${c.id}/memo.txt`;
+  $("#igceDownload").href = `/api/cases/${c.id}/igce.csv`;
+  $("#exportDownload").href = `/api/cases/${c.id}/export.json`;
 }
 
 function renderAnalysis() {
@@ -172,6 +197,10 @@ async function addContextEvidenceFromUsa(record) {
 function renderUsaResults(payload) {
   const target = $("#usaResults");
   target.innerHTML = "";
+  if (payload.error) {
+    target.innerHTML = `<div class="record"><strong>${escapeHtml(payload.error)}</strong><small>${escapeHtml(payload.message || "")}</small></div>`;
+    return;
+  }
   const warning = document.createElement("div");
   warning.className = "record";
   warning.innerHTML = `<strong>Use Warning</strong><small>${escapeHtml(payload.unit_price_warning || "")}</small>`;
@@ -189,6 +218,34 @@ function renderUsaResults(payload) {
     node.querySelector("button").addEventListener("click", () => addContextEvidenceFromUsa(record));
     target.appendChild(node);
   }
+}
+
+async function loadOperatorStatus() {
+  const status = await api("/api/operator/status");
+  const target = $("#operatorStatus");
+  target.innerHTML = `
+    <div class="record">
+      <strong>Server</strong>
+      <small>${escapeHtml(status.host)}:${escapeHtml(status.port)} | uptime ${escapeHtml(status.uptime_seconds)} seconds</small>
+      <pre>${escapeHtml(JSON.stringify({
+        schema_version: status.schema_version,
+        journal_mode: status.journal_mode,
+        database_path: status.database_path,
+        backup_dir: status.backup_dir,
+        counts: status.counts
+      }, null, 2))}</pre>
+    </div>
+  `;
+}
+
+async function createBackup() {
+  const result = await api("/api/operator/backup", { method: "POST", body: JSON.stringify({}) });
+  $("#backupResult").innerHTML = `
+    <div class="record">
+      <strong>Backup Created</strong>
+      <small>${escapeHtml(result.backup_path)}</small>
+    </div>
+  `;
 }
 
 function renderSamResults(payload) {
@@ -229,13 +286,17 @@ function escapeAttr(value) {
 }
 
 function bindEvents() {
-  $("#refreshCases").addEventListener("click", loadCases);
+  $("#refreshCases").addEventListener("click", () => runSafely(loadCases, "Cases refreshed."));
   $("#runAnalysis").addEventListener("click", async () => {
-    if (!state.currentCaseId) return;
-    state.analysis = await api(`/api/cases/${state.currentCaseId}/analysis`);
-    renderAnalysis();
+    await runSafely(async () => {
+      if (!state.currentCaseId) return;
+      state.analysis = await api(`/api/cases/${state.currentCaseId}/analysis`);
+      renderAnalysis();
+    }, "Analysis refreshed.");
   });
-  $("#loadMemo").addEventListener("click", loadMemo);
+  $("#loadMemo").addEventListener("click", () => runSafely(loadMemo, "Memo loaded."));
+  $("#loadStatus").addEventListener("click", () => runSafely(loadOperatorStatus, "Operator status refreshed."));
+  $("#backupNow").addEventListener("click", () => runSafely(createBackup, "Backup created."));
 
   document.querySelectorAll(".tab").forEach((tab) => {
     tab.addEventListener("click", () => {
@@ -248,46 +309,56 @@ function bindEvents() {
 
   $("#caseForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const created = await api("/api/cases", { method: "POST", body: JSON.stringify(formData(event.currentTarget)) });
-    await loadCases();
-    await selectCase(created.id);
+    await runSafely(async () => {
+      const created = await api("/api/cases", { method: "POST", body: JSON.stringify(formData(event.currentTarget)) });
+      await loadCases();
+      await selectCase(created.id);
+    }, "Case created.");
   });
 
   $("#evidenceForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (!state.currentCaseId) return;
-    await api(`/api/cases/${state.currentCaseId}/evidence`, { method: "POST", body: JSON.stringify(formData(event.currentTarget)) });
-    event.currentTarget.reset();
-    await selectCase(state.currentCaseId);
+    await runSafely(async () => {
+      if (!state.currentCaseId) return;
+      await api(`/api/cases/${state.currentCaseId}/evidence`, { method: "POST", body: JSON.stringify(formData(event.currentTarget)) });
+      event.currentTarget.reset();
+      await selectCase(state.currentCaseId);
+    }, "Evidence added.");
   });
 
   $("#adjustmentForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (!state.currentCaseId) return;
-    await api(`/api/cases/${state.currentCaseId}/adjustments`, { method: "POST", body: JSON.stringify(formData(event.currentTarget)) });
-    event.currentTarget.reset();
-    await selectCase(state.currentCaseId);
+    await runSafely(async () => {
+      if (!state.currentCaseId) return;
+      await api(`/api/cases/${state.currentCaseId}/adjustments`, { method: "POST", body: JSON.stringify(formData(event.currentTarget)) });
+      event.currentTarget.reset();
+      await selectCase(state.currentCaseId);
+    }, "Adjustment added.");
   });
 
   $("#usaForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const data = formData(event.currentTarget);
-    const payload = await api(`/api/search/usaspending?keywords=${encodeURIComponent(data.keywords || "")}`);
-    renderUsaResults(payload);
+    await runSafely(async () => {
+      const data = formData(event.currentTarget);
+      const payload = await api(`/api/search/usaspending?keywords=${encodeURIComponent(data.keywords || "")}`);
+      renderUsaResults(payload);
+    }, "USAspending search complete.");
   });
 
   $("#samForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const data = formData(event.currentTarget);
-    const params = new URLSearchParams(data);
-    const payload = await api(`/api/search/sam?${params.toString()}`);
-    renderSamResults(payload);
+    await runSafely(async () => {
+      const data = formData(event.currentTarget);
+      const params = new URLSearchParams(data);
+      const payload = await api(`/api/search/sam?${params.toString()}`);
+      renderSamResults(payload);
+    }, "SAM.gov search complete.");
   });
 }
 
 bindEvents();
-loadCases().catch((error) => {
+loadCases().then(loadOperatorStatus).catch((error) => {
   $("#caseTitle").textContent = "Startup error";
   $("#caseMeta").textContent = error.message;
+  showNotice(error.message, "error");
 });
-

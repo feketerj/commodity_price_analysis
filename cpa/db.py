@@ -3,9 +3,15 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from cpa.validation import validate_adjustment_payload, validate_case_payload, validate_evidence_payload
+
+
+SCHEMA_VERSION = "2026-06-06.operator.1"
 
 
 def utc_now() -> str:
@@ -27,15 +33,34 @@ class Database:
         self.path = path
 
     def connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(self.path, timeout=10)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA busy_timeout = 10000")
         return conn
 
+    @contextmanager
+    def session(self):
+        conn = self.connect()
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
+
     def initialize(self) -> None:
-        with self.connect() as conn:
+        with self.session() as conn:
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA synchronous = NORMAL")
             conn.executescript(
                 """
+                CREATE TABLE IF NOT EXISTS schema_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS cases (
                     id TEXT PRIMARY KEY,
                     title TEXT NOT NULL,
@@ -102,40 +127,51 @@ class Database:
                     payload_json TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+
+                CREATE INDEX IF NOT EXISTS idx_evidence_case_created ON evidence(case_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_adjustments_case_created ON adjustments(case_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_audit_case_created ON audit_events(case_id, created_at);
                 """
+            )
+            conn.execute(
+                """
+                INSERT INTO schema_meta (key, value, updated_at)
+                VALUES ('schema_version', ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                """,
+                (SCHEMA_VERSION, utc_now()),
             )
 
     def list_cases(self) -> list[dict[str, Any]]:
-        with self.connect() as conn:
+        with self.session() as conn:
             rows = conn.execute("SELECT * FROM cases ORDER BY updated_at DESC").fetchall()
         return [dict(row) for row in rows]
 
     def create_case(self, payload: dict[str, Any]) -> dict[str, Any]:
+        payload = validate_case_payload(payload)
         case_id = payload.get("id") or str(uuid.uuid4())
         now = utc_now()
         record = {
             "id": case_id,
-            "title": payload.get("title") or "Untitled pricing case",
-            "commodity": payload.get("commodity") or "",
-            "form": payload.get("form") or "",
-            "pack": payload.get("pack") or "",
-            "grade": payload.get("grade") or "",
-            "target_unit": payload.get("target_unit") or "lb",
+            "title": payload["title"],
+            "commodity": payload["commodity"],
+            "form": payload["form"],
+            "pack": payload["pack"],
+            "grade": payload["grade"],
+            "target_unit": payload["target_unit"],
             "target_package_weight_value": payload.get("target_package_weight_value"),
             "target_package_weight_unit": payload.get("target_package_weight_unit"),
-            "quantity_value": float(payload.get("quantity_value") or 0),
-            "quantity_unit": payload.get("quantity_unit") or "",
-            "destination": payload.get("destination") or "",
-            "delivery_window": payload.get("delivery_window") or "",
-            "acquisition_method": payload.get("acquisition_method") or "",
-            "freight_responsibility": payload.get("freight_responsibility") or "delivered",
-            "notes": payload.get("notes") or "",
+            "quantity_value": payload["quantity_value"],
+            "quantity_unit": payload["quantity_unit"],
+            "destination": payload["destination"],
+            "delivery_window": payload["delivery_window"],
+            "acquisition_method": payload["acquisition_method"],
+            "freight_responsibility": payload["freight_responsibility"],
+            "notes": payload["notes"],
             "created_at": now,
             "updated_at": now,
         }
-        if not record["commodity"] or not record["form"] or not record["pack"]:
-            raise ValueError("case commodity, form, and pack are required")
-        with self.connect() as conn:
+        with self.session() as conn:
             conn.execute(
                 """
                 INSERT INTO cases (
@@ -158,36 +194,35 @@ class Database:
     def add_evidence(self, case_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         if not self.get_case_bundle(case_id):
             raise ValueError(f"case not found: {case_id}")
+        payload = validate_evidence_payload(payload)
         now = utc_now()
         record = {
             "id": payload.get("id") or str(uuid.uuid4()),
             "case_id": case_id,
-            "source_type": payload.get("source_type") or "analyst_upload",
-            "source_name": payload.get("source_name") or "",
-            "source_url": payload.get("source_url") or "",
-            "citation": payload.get("citation") or "",
+            "source_type": payload["source_type"],
+            "source_name": payload["source_name"],
+            "source_url": payload["source_url"],
+            "citation": payload["citation"],
             "retrieved_at": payload.get("retrieved_at") or now,
-            "raw_description": payload.get("raw_description") or "",
-            "commodity": payload.get("commodity") or "",
-            "form": payload.get("form") or "",
-            "pack": payload.get("pack") or "",
-            "grade": payload.get("grade") or "",
-            "location": payload.get("location") or "",
-            "price_date": payload.get("price_date") or "",
-            "quantity_value": _float_or_none(payload.get("quantity_value")),
+            "raw_description": payload["raw_description"],
+            "commodity": payload["commodity"],
+            "form": payload["form"],
+            "pack": payload["pack"],
+            "grade": payload["grade"],
+            "location": payload["location"],
+            "price_date": payload["price_date"],
+            "quantity_value": payload.get("quantity_value"),
             "quantity_unit": payload.get("quantity_unit"),
-            "unit_price": _float_or_none(payload.get("unit_price")),
+            "unit_price": payload.get("unit_price"),
             "price_basis_unit": payload.get("price_basis_unit"),
-            "package_weight_value": _float_or_none(payload.get("package_weight_value")),
+            "package_weight_value": payload.get("package_weight_value"),
             "package_weight_unit": payload.get("package_weight_unit"),
             "freight_included": 1 if payload.get("freight_included") else 0,
-            "delivery_terms": payload.get("delivery_terms") or "",
+            "delivery_terms": payload["delivery_terms"],
             "metadata_json": _json(payload.get("metadata") or {}),
             "created_at": now,
         }
-        if not record["source_name"]:
-            raise ValueError("evidence source_name is required")
-        with self.connect() as conn:
+        with self.session() as conn:
             conn.execute(
                 """
                 INSERT INTO evidence (
@@ -213,20 +248,19 @@ class Database:
     def add_adjustment(self, case_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         if not self.get_case_bundle(case_id):
             raise ValueError(f"case not found: {case_id}")
+        payload = validate_adjustment_payload(payload)
         now = utc_now()
         record = {
             "id": payload.get("id") or str(uuid.uuid4()),
             "case_id": case_id,
             "evidence_id": payload.get("evidence_id"),
-            "category": payload.get("category") or "other",
-            "amount_per_unit": float(payload.get("amount_per_unit") or 0),
-            "rationale": payload.get("rationale") or "",
-            "source_url": payload.get("source_url") or "",
+            "category": payload["category"],
+            "amount_per_unit": payload["amount_per_unit"],
+            "rationale": payload["rationale"],
+            "source_url": payload["source_url"],
             "created_at": now,
         }
-        if not record["rationale"]:
-            raise ValueError("adjustment rationale is required")
-        with self.connect() as conn:
+        with self.session() as conn:
             conn.execute(
                 """
                 INSERT INTO adjustments (
@@ -242,7 +276,7 @@ class Database:
         return record
 
     def get_case_bundle(self, case_id: str) -> dict[str, Any] | None:
-        with self.connect() as conn:
+        with self.session() as conn:
             case_row = conn.execute("SELECT * FROM cases WHERE id = ?", (case_id,)).fetchone()
             if not case_row:
                 return None
@@ -252,6 +286,57 @@ class Database:
             "case": dict(case_row),
             "evidence": [self._row_to_evidence(dict(row)) for row in evidence_rows],
             "adjustments": [dict(row) for row in adjustment_rows],
+        }
+
+    def audit_events(self, case_id: str) -> list[dict[str, Any]]:
+        with self.session() as conn:
+            rows = conn.execute(
+                "SELECT * FROM audit_events WHERE case_id = ? ORDER BY created_at",
+                (case_id,),
+            ).fetchall()
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            event = dict(row)
+            event["payload"] = _parse_json(event.pop("payload_json"))
+            events.append(event)
+        return events
+
+    def backup(self, backup_dir: Path) -> Path:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        stamp = utc_now().replace(":", "").replace("+", "Z")
+        backup_path = backup_dir / f"commodity_price_analysis-{stamp}.sqlite3"
+        source = self.connect()
+        target = sqlite3.connect(backup_path)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+            source.close()
+        return backup_path
+
+    def status(self) -> dict[str, Any]:
+        with self.session() as conn:
+            case_count = conn.execute("SELECT COUNT(*) FROM cases").fetchone()[0]
+            evidence_count = conn.execute("SELECT COUNT(*) FROM evidence").fetchone()[0]
+            adjustment_count = conn.execute("SELECT COUNT(*) FROM adjustments").fetchone()[0]
+            audit_count = conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0]
+            schema_row = conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
+            journal_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+            wal_checkpoint = conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
+        return {
+            "ok": True,
+            "database_path": str(self.path),
+            "database_exists": self.path.exists(),
+            "database_size_bytes": self.path.stat().st_size if self.path.exists() else 0,
+            "schema_version": schema_row[0] if schema_row else "unknown",
+            "journal_mode": journal_mode,
+            "wal_checkpoint": list(wal_checkpoint) if wal_checkpoint else [],
+            "counts": {
+                "cases": case_count,
+                "evidence": evidence_count,
+                "adjustments": adjustment_count,
+                "audit_events": audit_count,
+            },
         }
 
     def _audit(self, conn: sqlite3.Connection, case_id: str | None, event_type: str, payload: dict[str, Any]) -> None:
@@ -265,10 +350,3 @@ class Database:
         row["metadata"] = _parse_json(row.pop("metadata_json", "{}")) or {}
         row["freight_included"] = bool(row["freight_included"])
         return row
-
-
-def _float_or_none(value: Any) -> float | None:
-    if value is None or value == "":
-        return None
-    return float(value)
-

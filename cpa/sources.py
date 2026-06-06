@@ -4,8 +4,9 @@ import json
 import os
 import urllib.parse
 import urllib.request
-from datetime import date
+from datetime import date, datetime
 from typing import Any
+from urllib.error import HTTPError, URLError
 
 
 USA_SPENDING_ENDPOINT = "https://api.usaspending.gov/api/v2/search/spending_by_award/"
@@ -41,7 +42,10 @@ def search_usaspending_awards(keywords: str, agency: str = "Agricultural Marketi
         "sort": "Start Date",
         "order": "desc",
     }
-    data = _post_json(USA_SPENDING_ENDPOINT, payload)
+    try:
+        data = _post_json(USA_SPENDING_ENDPOINT, payload)
+    except ExternalSourceError as exc:
+        return _source_error("USAspending", exc)
     return {
         "source": "USAspending",
         "unit_price_warning": "Award amount is not treated as CLIN-level unit price. Use for discovery/context unless unit-price evidence is separately supplied.",
@@ -60,6 +64,23 @@ def search_sam_opportunities(title: str, ptype: str, posted_from: str, posted_to
             "message": "Set SAM_API_KEY to enable SAM.gov opportunity searches. App functionality is not blocked.",
             "results": [],
         }
+    if ptype not in {"a", "o", "k", "r", "p", "s", "u"}:
+        return {
+            "source": "SAM.gov Opportunities",
+            "error": "invalid_procurement_type",
+            "message": "ptype must be one of a, o, k, r, p, s, or u.",
+            "results": [],
+        }
+    for label, value in {"postedFrom": posted_from, "postedTo": posted_to}.items():
+        try:
+            datetime.strptime(value, "%m/%d/%Y")
+        except ValueError:
+            return {
+                "source": "SAM.gov Opportunities",
+                "error": "invalid_date",
+                "message": f"{label} must use MM/DD/YYYY.",
+                "results": [],
+            }
     params = {
         "api_key": api_key,
         "postedFrom": posted_from,
@@ -70,7 +91,10 @@ def search_sam_opportunities(title: str, ptype: str, posted_from: str, posted_to
     if title:
         params["title"] = title
     url = f"{SAM_OPPORTUNITIES_ENDPOINT}?{urllib.parse.urlencode(params)}"
-    data = _get_json(url)
+    try:
+        data = _get_json(url)
+    except ExternalSourceError as exc:
+        return _source_error("SAM.gov Opportunities", exc)
     return {
         "source": "SAM.gov Opportunities",
         "unit_price_warning": "SAM.gov notices and awards are discovery/context unless attachments or award data contain line-level unit prices.",
@@ -79,15 +103,43 @@ def search_sam_opportunities(title: str, ptype: str, posted_from: str, posted_to
     }
 
 
+class ExternalSourceError(RuntimeError):
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
+
 def _post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
+    return _open_json(request)
 
 
 def _get_json(url: str) -> dict[str, Any]:
     request = urllib.request.Request(url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
+    return _open_json(request)
 
+
+def _open_json(request: urllib.request.Request) -> dict[str, Any]:
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")[:500]
+        raise ExternalSourceError(f"HTTP {exc.code}: {body or exc.reason}", status=exc.code) from exc
+    except URLError as exc:
+        raise ExternalSourceError(f"network error: {exc.reason}") from exc
+    except json.JSONDecodeError as exc:
+        raise ExternalSourceError(f"invalid JSON response: {exc}") from exc
+    except TimeoutError as exc:
+        raise ExternalSourceError("request timed out") from exc
+
+
+def _source_error(source: str, exc: ExternalSourceError) -> dict[str, Any]:
+    return {
+        "source": source,
+        "error": "external_source_error",
+        "status": exc.status,
+        "message": str(exc),
+        "results": [],
+    }

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from statistics import median
 from typing import Any
 
@@ -58,6 +58,8 @@ def evaluate_evidence(case: dict[str, Any], item: dict[str, Any], adjustments: l
         critical.append("Missing unit price or price basis unit.")
     if not item.get("price_date"):
         critical.append("Missing price date.")
+    else:
+        warnings.extend(_price_date_warnings(item["price_date"]))
 
     _compare_text(case, item, "commodity", critical)
     _compare_text(case, item, "form", critical)
@@ -86,6 +88,8 @@ def evaluate_evidence(case: dict[str, Any], item: dict[str, Any], adjustments: l
     adjusted = None
     if normalized_price is not None:
         adjusted = normalized_price + sum(float(adj["amount_per_unit"]) for adj in item_adjustments)
+        if adjusted <= 0:
+            critical.append("Adjusted unit price is zero or negative; check unit price and adjustments.")
 
     status = "unit_price_eligible" if not critical else "context_only"
     return PriceResult(
@@ -247,6 +251,8 @@ def _case_risk_flags(case: dict[str, Any], rows: list[PriceResult], stats: dict[
         "freight" in " ".join(row.warnings).lower() for row in rows if row.status == "unit_price_eligible"
     ):
         flags.append("Delivered-price case has freight-related warnings.")
+    if any("stale" in " ".join(row.warnings).lower() for row in rows if row.status == "unit_price_eligible"):
+        flags.append("At least one eligible comparable is stale; confirm it remains a valid basis before relying on the range.")
     return flags
 
 
@@ -271,6 +277,20 @@ def _source_integrity(rows: list[PriceResult]) -> dict[str, Any]:
         "warnings_count": sum(len(row.warnings) for row in rows),
         "critical_issue_count": sum(len(row.critical_issues) for row in rows),
     }
+
+
+def _price_date_warnings(value: str) -> list[str]:
+    try:
+        price_date = datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        return ["Price date is not YYYY-MM-DD; analyst review required."]
+    today = date.today()
+    if price_date > today:
+        return ["Price date is in the future; analyst review required."]
+    age_days = (today - price_date).days
+    if age_days > 365:
+        return [f"Price date is stale ({age_days} days old); confirm market comparability."]
+    return []
 
 
 def _norm(value: Any) -> str:
@@ -298,4 +318,3 @@ def _round_money(value: float | None) -> float | None:
     if value is None:
         return None
     return round(float(value), 4)
-
