@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Commodity Price Analysis</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">CPA</div>
+          <div>
+            <h1>Commodity Price Analysis</h1>
+            <p>IGCE and fair-price support</p>
+          </div>
+        </div>
+
+        <button id="refreshCases" class="primary full">Refresh Cases</button>
+        <div id="caseList" class="case-list"></div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <h2 id="caseTitle">Loading case...</h2>
+            <p id="caseMeta"></p>
+          </div>
+          <div class="top-actions">
+            <a id="memoDownload" class="button" href="#" target="_blank">Memo</a>
+            <button id="runAnalysis" class="primary">Analyze</button>
+          </div>
+        </header>
+
+        <nav class="tabs" aria-label="Primary">
+          <button class="tab active" data-tab="analysis">Analysis</button>
+          <button class="tab" data-tab="case">Case</button>
+          <button class="tab" data-tab="evidence">Evidence</button>
+          <button class="tab" data-tab="discovery">Discovery</button>
+          <button class="tab" data-tab="memo">Memo Draft</button>
+        </nav>
+
+        <section id="analysisTab" class="tab-panel active">
+          <div class="metric-strip">
+            <div class="metric">
+              <span>Eligible Evidence</span>
+              <strong id="metricEligible">0</strong>
+            </div>
+            <div class="metric">
+              <span>Median</span>
+              <strong id="metricMedian">n/a</strong>
+            </div>
+            <div class="metric">
+              <span>Range Screen</span>
+              <strong id="metricRange">n/a</strong>
+            </div>
+            <div class="metric warn">
+              <span>Flags</span>
+              <strong id="metricFlags">0</strong>
+            </div>
+          </div>
+
+          <div class="split">
+            <section class="panel">
+              <div class="panel-header">
+                <h3>Comparability Gate</h3>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Source</th>
+                      <th>Status</th>
+                      <th>Normalized</th>
+                      <th>Adjusted</th>
+                      <th>Issues</th>
+                    </tr>
+                  </thead>
+                  <tbody id="analysisRows"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header">
+                <h3>Risk Flags</h3>
+              </div>
+              <ul id="riskFlags" class="risk-list"></ul>
+            </section>
+          </div>
+        </section>
+
+        <section id="caseTab" class="tab-panel">
+          <section class="panel">
+            <div class="panel-header">
+              <h3>New Case</h3>
+            </div>
+            <form id="caseForm" class="grid-form">
+              <label>Title<input name="title" required /></label>
+              <label>Commodity<input name="commodity" required placeholder="pinto beans" /></label>
+              <label>Form<input name="form" required placeholder="dry edible beans" /></label>
+              <label>Pack<input name="pack" required placeholder="50 kg bag" /></label>
+              <label>Grade or Spec<input name="grade" placeholder="USDA commodity specification" /></label>
+              <label>Target Unit
+                <select name="target_unit">
+                  <option value="lb">lb</option>
+                  <option value="kg">kg</option>
+                  <option value="50kg_bag">50 kg bag</option>
+                  <option value="case">case</option>
+                </select>
+              </label>
+              <label>Quantity<input name="quantity_value" type="number" step="0.01" required /></label>
+              <label>Quantity Unit<input name="quantity_unit" placeholder="50 kg bags" /></label>
+              <label>Destination<input name="destination" placeholder="North Dakota" /></label>
+              <label>Delivery Window<input name="delivery_window" placeholder="August 2026" /></label>
+              <label>Freight Responsibility
+                <select name="freight_responsibility">
+                  <option value="delivered">delivered</option>
+                  <option value="origin">origin</option>
+                  <option value="unknown">unknown</option>
+                </select>
+              </label>
+              <label>Acquisition Method<input name="acquisition_method" /></label>
+              <label class="wide">Notes<textarea name="notes" rows="3"></textarea></label>
+              <button class="primary" type="submit">Create Case</button>
+            </form>
+          </section>
+        </section>
+
+        <section id="evidenceTab" class="tab-panel">
+          <div class="split">
+            <section class="panel">
+              <div class="panel-header">
+                <h3>Add Evidence</h3>
+              </div>
+              <form id="evidenceForm" class="grid-form compact">
+                <label>Source Type
+                  <select name="source_type">
+                    <option value="analyst_upload">analyst upload</option>
+                    <option value="ams_award_line">AMS award line</option>
+                    <option value="market_news">market news</option>
+                    <option value="quote">quote</option>
+                    <option value="usaspending_award">USAspending award</option>
+                    <option value="sam_opportunity">SAM opportunity</option>
+                  </select>
+                </label>
+                <label>Source Name<input name="source_name" required /></label>
+                <label>Source URL<input name="source_url" /></label>
+                <label>Citation<input name="citation" /></label>
+                <label>Commodity<input name="commodity" required /></label>
+                <label>Form<input name="form" required /></label>
+                <label>Pack<input name="pack" required /></label>
+                <label>Grade or Spec<input name="grade" /></label>
+                <label>Location<input name="location" /></label>
+                <label>Price Date<input name="price_date" type="date" /></label>
+                <label>Unit Price<input name="unit_price" type="number" step="0.0001" /></label>
+                <label>Basis Unit
+                  <select name="price_basis_unit">
+                    <option value="">none</option>
+                    <option value="lb">lb</option>
+                    <option value="kg">kg</option>
+                    <option value="50kg_bag">50 kg bag</option>
+                    <option value="case">case</option>
+                  </select>
+                </label>
+                <label>Package Weight<input name="package_weight_value" type="number" step="0.01" /></label>
+                <label>Weight Unit
+                  <select name="package_weight_unit">
+                    <option value="">none</option>
+                    <option value="lb">lb</option>
+                    <option value="kg">kg</option>
+                  </select>
+                </label>
+                <label>Delivery Terms<input name="delivery_terms" /></label>
+                <label class="check"><input name="freight_included" type="checkbox" /> Freight included</label>
+                <label class="wide">Raw Description<textarea name="raw_description" rows="3"></textarea></label>
+                <button class="primary" type="submit">Add Evidence</button>
+              </form>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header">
+                <h3>Add Adjustment</h3>
+              </div>
+              <form id="adjustmentForm" class="grid-form compact">
+                <label>Evidence
+                  <select name="evidence_id" id="adjustmentEvidence"></select>
+                </label>
+                <label>Category
+                  <select name="category">
+                    <option value="freight">freight</option>
+                    <option value="time_index">time index</option>
+                    <option value="regional_basis">regional basis</option>
+                    <option value="pack_grade">pack or grade</option>
+                    <option value="quantity">quantity</option>
+                    <option value="urgency">urgency</option>
+                    <option value="other">other</option>
+                  </select>
+                </label>
+                <label>Amount Per Unit<input name="amount_per_unit" type="number" step="0.0001" required /></label>
+                <label>Source URL<input name="source_url" /></label>
+                <label class="wide">Rationale<textarea name="rationale" rows="4" required></textarea></label>
+                <button class="primary" type="submit">Add Adjustment</button>
+              </form>
+            </section>
+          </div>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Evidence Record</h3>
+            </div>
+            <div id="evidenceRecord" class="record-list"></div>
+          </section>
+        </section>
+
+        <section id="discoveryTab" class="tab-panel">
+          <div class="split">
+            <section class="panel">
+              <div class="panel-header">
+                <h3>USAspending Discovery</h3>
+              </div>
+              <form id="usaForm" class="inline-form">
+                <input name="keywords" placeholder="beans tomato potato vegetables" />
+                <button class="primary" type="submit">Search</button>
+              </form>
+              <div id="usaResults" class="record-list"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header">
+                <h3>SAM.gov Discovery</h3>
+              </div>
+              <form id="samForm" class="grid-form compact">
+                <label>Title<input name="title" placeholder="beans" /></label>
+                <label>Type
+                  <select name="ptype">
+                    <option value="a">award notice</option>
+                    <option value="o">solicitation</option>
+                    <option value="k">combined synopsis</option>
+                    <option value="r">sources sought</option>
+                  </select>
+                </label>
+                <label>Posted From<input name="postedFrom" placeholder="01/01/2025" /></label>
+                <label>Posted To<input name="postedTo" placeholder="06/06/2026" /></label>
+                <button class="primary" type="submit">Search SAM</button>
+              </form>
+              <div id="samResults" class="record-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="memoTab" class="tab-panel">
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Memo Draft</h3>
+              <button id="loadMemo">Load Memo</button>
+            </div>
+            <textarea id="memoText" class="memo-text" spellcheck="false"></textarea>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
+
